@@ -51,7 +51,7 @@ if (process.env.ADMIN_USER && process.env.ADMIN_PASS) {
   else db.prepare("INSERT INTO users(name,salt,hash,role,trust,created) VALUES(?,?,?,'admin',100,?)").run(process.env.ADMIN_USER, salt, hash, Date.now());
 }
 
-const STATIC = { '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'], '/sw.js': ['sw.js', 'text/javascript'], '/icon-192.png': ['icon-192.png', 'image/png'], '/icon-512.png': ['icon-512.png', 'image/png'], '/apple-touch-icon.png': ['apple-touch-icon.png', 'image/png'], '/impressum': ['impressum.html', 'text/html; charset=utf-8'], '/datenschutz': ['datenschutz.html', 'text/html; charset=utf-8'] };
+const STATIC = { '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'], '/sw.js': ['sw.js', 'text/javascript'], '/icon-192.png': ['icon-192.png', 'image/png'], '/icon-512.png': ['icon-512.png', 'image/png'], '/apple-touch-icon.png': ['apple-touch-icon.png', 'image/png'], '/icon.svg': ['icon.svg', 'image/svg+xml'], '/icon-maskable-512.png': ['icon-maskable-512.png', 'image/png'], '/impressum': ['impressum.html', 'text/html; charset=utf-8'], '/datenschutz': ['datenschutz.html', 'text/html; charset=utf-8'] };
 const CATS = ['Geschwindigkeitskontrolle (Radar/Laser)', 'Verkehrskontrolle / Anhaltung',
   'Unfallaufnahme', 'Straßensperre / Umleitung', 'Streife unterwegs',
   'Stau / Rückstau', 'Wildwechsel / Gefahr', 'Baustelle', 'Sonstiges'];
