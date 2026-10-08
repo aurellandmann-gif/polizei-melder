@@ -22,6 +22,16 @@ for (const c of ['flag INTEGER DEFAULT 0', 'reason TEXT'])
 
 let webpush = null; try { webpush = require('web-push'); } catch {}
 db.exec('CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT); CREATE TABLE IF NOT EXISTS push_subs(endpoint TEXT PRIMARY KEY, user_id INTEGER, sub TEXT, lat REAL, lng REAL, radius INTEGER, created INTEGER);');
+// Verlauf (bleibt 90 Tage für Hotspots, Abzeichen und Rückblick), Punkte-Protokoll (Wochenwertung), Warnungen und Freunde
+db.exec(`CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, lat REAL, lng REAL, cat TEXT, loc TEXT, t INTEGER);
+CREATE INDEX IF NOT EXISTS history_t ON history(t); CREATE INDEX IF NOT EXISTS history_u ON history(user_id);
+CREATE TABLE IF NOT EXISTS points_log(user_id INTEGER, d INTEGER, t INTEGER); CREATE INDEX IF NOT EXISTS points_t ON points_log(t);
+CREATE TABLE IF NOT EXISTS seen(report_id INTEGER, k TEXT, author_id INTEGER, t INTEGER, PRIMARY KEY(report_id, k));
+CREATE TABLE IF NOT EXISTS friends(user_id INTEGER, friend_id INTEGER, created INTEGER, PRIMARY KEY(user_id, friend_id));`);
+for (const c of ['reports_total INTEGER DEFAULT 0', 'confirms_total INTEGER DEFAULT 0', 'warned_total INTEGER DEFAULT 0', 'crowns INTEGER DEFAULT 0', 'badges TEXT'])
+  try { db.exec('ALTER TABLE users ADD COLUMN ' + c); } catch {}
+try { db.exec('ALTER TABLE reports ADD COLUMN warned INTEGER DEFAULT 0'); } catch {}
+
 let vapid = null;
 if (webpush) {
   try {
@@ -43,6 +53,12 @@ function notify(r, author) {
       .catch(e => { if (e.statusCode === 404 || e.statusCode === 410) db.prepare('DELETE FROM push_subs WHERE endpoint=?').run(s.endpoint); });
   }
 }
+function notifyUser(uid, title, body) {
+  if (!vapid) return;
+  for (const s of db.prepare('SELECT * FROM push_subs WHERE user_id=?').all(uid))
+    webpush.sendNotification(JSON.parse(s.sub), JSON.stringify({ title, body, url: '/' }), { TTL: 3600 })
+      .catch(e => { if (e.statusCode === 404 || e.statusCode === 410) db.prepare('DELETE FROM push_subs WHERE endpoint=?').run(s.endpoint); });
+}
 const hashPw = (p, salt) => crypto.scryptSync(p, salt, 32).toString('hex');
 if (process.env.ADMIN_USER && process.env.ADMIN_PASS) {
   const salt = crypto.randomBytes(16).toString('hex'), hash = hashPw(process.env.ADMIN_PASS, salt);
@@ -51,7 +67,7 @@ if (process.env.ADMIN_USER && process.env.ADMIN_PASS) {
   else db.prepare("INSERT INTO users(name,salt,hash,role,trust,created) VALUES(?,?,?,'admin',100,?)").run(process.env.ADMIN_USER, salt, hash, Date.now());
 }
 
-const STATIC = { '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'], '/sw.js': ['sw.js', 'text/javascript'], '/icon-192.png': ['icon-192.png', 'image/png'], '/icon-512.png': ['icon-512.png', 'image/png'], '/apple-touch-icon.png': ['apple-touch-icon.png', 'image/png'], '/icon.svg': ['icon.svg', 'image/svg+xml'], '/icon-maskable-512.png': ['icon-maskable-512.png', 'image/png'], '/impressum': ['impressum.html', 'text/html; charset=utf-8'], '/datenschutz': ['datenschutz.html', 'text/html; charset=utf-8'] };
+const STATIC = { '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'], '/sw.js': ['sw.js', 'text/javascript'], '/icon-192.png': ['icon-192.png', 'image/png'], '/icon-512.png': ['icon-512.png', 'image/png'], '/apple-touch-icon.png': ['apple-touch-icon.png', 'image/png'], '/icon.svg': ['icon.svg', 'image/svg+xml'], '/plus.js': ['plus.js', 'text/javascript; charset=utf-8'], '/plus.css': ['plus.css', 'text/css; charset=utf-8'], '/icon-maskable-512.png': ['icon-maskable-512.png', 'image/png'], '/impressum': ['impressum.html', 'text/html; charset=utf-8'], '/datenschutz': ['datenschutz.html', 'text/html; charset=utf-8'] };
 const CATS = ['Geschwindigkeitskontrolle (Radar/Laser)', 'Verkehrskontrolle / Anhaltung',
   'Unfallaufnahme', 'Straßensperre / Umleitung', 'Streife unterwegs',
   'Stau / Rückstau', 'Wildwechsel / Gefahr', 'Baustelle', 'Sonstiges'];
@@ -69,6 +85,9 @@ setInterval(() => {
   db.prepare('DELETE FROM reports WHERE t < ?').run(now - 24 * 3600 * 1000);
   db.prepare('DELETE FROM sessions WHERE created < ?').run(now - 30 * 864e5);
   db.prepare('DELETE FROM mod_log WHERE t < ?').run(now - 14 * 864e5);
+  db.prepare('DELETE FROM history WHERE t < ?').run(now - 90 * 864e5);
+  db.prepare('DELETE FROM points_log WHERE t < ?').run(now - 60 * 864e5);
+  db.prepare('DELETE FROM seen WHERE t < ?').run(now - 30 * 864e5);
   db.prepare('DELETE FROM bans WHERE until IS NOT NULL AND until < ?').run(now);
   db.prepare('UPDATE users SET banned=0 WHERE banned=1 AND ban_until IS NOT NULL AND ban_until < ?').run(now);
   for (const [k, v] of presence) if (now - v.t > 4 * 3600e3) presence.delete(k);
@@ -167,7 +186,63 @@ const pub = u => ({ name: u.name, role: u.role, trust: u.trust, banned: !!u.bann
 const wOf = u => u && u.role === 'admin' ? 3 : u && u.trust >= 20 ? 2 : 1;
 // Meldung verschwindet, wenn Gegenstimmen (Weg + Falsch) mindestens doppelt so viele sind wie Bestätigungen (Melder + Noch da).
 const stateOf = (r, a) => { const pos = (r.flag ? 0.5 : wOf(a)) + (r.still || 0), neg = (r.gone || 0) + (r.fake || 0); return { hidden: neg >= 2 * pos, conf: pos / (pos + neg + 1) }; };
-const addTrust = (uid, d) => { if (uid) db.prepare('UPDATE users SET trust = MAX(-50, MIN(500, trust + ?)) WHERE id=?').run(d, uid); };
+const addTrust = (uid, d) => {
+  if (!uid) return;
+  db.prepare('UPDATE users SET trust = MAX(-50, MIN(500, trust + ?)) WHERE id=?').run(d, uid);
+  db.prepare('INSERT INTO points_log VALUES(?,?,?)').run(uid, d, Date.now());
+};
+const confirmed = uid => { if (uid) db.prepare('UPDATE users SET confirms_total=confirms_total+1 WHERE id=?').run(uid); };
+
+// ---- Wochenwertung (Woche beginnt Montag 0 Uhr, Wiener Zeit) ----
+const viennaOff = t => { const d = new Date(t); return new Date(d.toLocaleString('en-US', { timeZone: 'Europe/Vienna' })) - new Date(d.toLocaleString('en-US', { timeZone: 'UTC' })); };
+const viennaHour = t => new Date(t + viennaOff(t)).getUTCHours();
+const weekStart = (t = Date.now()) => { const off = viennaOff(t), l = new Date(t + off), day = (l.getUTCDay() + 6) % 7; return Date.UTC(l.getUTCFullYear(), l.getUTCMonth(), l.getUTCDate() - day) - off; };
+const BOARD = "role<>'admin' AND (banned IS NOT 1 OR (ban_until IS NOT NULL AND ban_until<?))";
+const weekBoard = (from, to) => db.prepare(`SELECT u.id, u.name, u.trust, SUM(p.d) pts FROM points_log p JOIN users u ON u.id=p.user_id
+  WHERE p.t>=? AND p.t<? AND ${BOARD} GROUP BY p.user_id HAVING pts>0 ORDER BY pts DESC, MIN(p.t) ASC`).all(from, to, Date.now());
+// Krone für den Sieger der Vorwoche (wird einmal pro Woche vergeben)
+let crownCache = { ws: 0, id: null };
+function crownHolder() {
+  const ws = weekStart();
+  if (crownCache.ws === ws) return crownCache.id;
+  const top = weekBoard(ws - 7 * 864e5, ws)[0], id = top ? top.id : null;
+  if (id && db.prepare("SELECT v FROM settings WHERE k='crown_week'").get()?.v !== String(ws)) {
+    db.prepare('UPDATE users SET crowns=crowns+1 WHERE id=?').run(id);
+    db.prepare("INSERT OR REPLACE INTO settings VALUES('crown_week',?)").run(String(ws));
+  }
+  crownCache = { ws, id };
+  return id;
+}
+
+// ---- Abzeichen ----
+const BADGES = [
+  ['first', '🎯', 'Erste Meldung', 'Deine allererste Meldung', s => [s.reports, 1]],
+  ['r10', '📣', 'Fleißig', '10 Meldungen gemacht', s => [s.reports, 10]],
+  ['r50', '🏅', 'Profi-Melder', '50 Meldungen gemacht', s => [s.reports, 50]],
+  ['c10', '👍', 'Bestätigt', '10 Bestätigungen erhalten', s => [s.confirms, 10]],
+  ['c100', '🌟', 'Legende', '100 Bestätigungen erhalten', s => [s.confirms, 100]],
+  ['w100', '😇', 'Schutzengel', '100 Fahrer gewarnt', s => [s.warned, 100]],
+  ['w1000', '🦸', 'Held der Straße', '1000 Fahrer gewarnt', s => [s.warned, 1000]],
+  ['night', '🦉', 'Nachteule', 'Meldung zwischen 0 und 4 Uhr', s => [s.night, 1]],
+  ['early', '🌅', 'Frühaufsteher', 'Meldung zwischen 5 und 7 Uhr', s => [s.early, 1]],
+  ['sbg', '🏰', 'Salzburg-Profi', '10 Meldungen in der Stadt Salzburg', s => [s.sbg, 10]],
+  ['all', '🎨', 'Allrounder', '5 verschiedene Arten gemeldet', s => [s.kinds, 5]],
+  ['trust', '💎', 'Vertrauenswürdig', '20 Punkte erreicht', s => [s.trust, 20]],
+  ['crown', '👑', 'Wochensieger', 'Einmal Platz 1 der Woche', s => [s.crowns, 1]]];
+function userStats(uid) {
+  const x = db.prepare('SELECT trust, reports_total, confirms_total, warned_total, crowns, badges FROM users WHERE id=?').get(uid);
+  const h = db.prepare('SELECT lat, lng, cat, t FROM history WHERE user_id=?').all(uid), hrs = h.map(r => viennaHour(r.t));
+  const s = { reports: x.reports_total || 0, confirms: x.confirms_total || 0, warned: x.warned_total || 0, crowns: x.crowns || 0, trust: x.trust,
+    night: hrs.filter(v => v < 4).length, early: hrs.filter(v => v >= 5 && v < 7).length,
+    sbg: h.filter(r => distKm(r.lat, r.lng, 47.8095, 13.055) < 8).length, kinds: new Set(h.map(r => r.cat)).size };
+  // Einmal verdiente Abzeichen bleiben, auch wenn der Verlauf älter als 90 Tage wird
+  let kept = []; try { kept = JSON.parse(x.badges || '[]'); } catch {}
+  const badges = BADGES.map(([id, e, n, d, f]) => { const [cur, max] = f(s); return { id, e, n, d, got: cur >= max || kept.includes(id), cur: Math.max(0, Math.min(cur, max)), max }; });
+  const got = badges.filter(b => b.got).map(b => b.id);
+  if (got.length !== kept.length) db.prepare('UPDATE users SET badges=? WHERE id=?').run(JSON.stringify(got), uid);
+  return { stats: s, badges };
+}
+let heatCache = { t: 0, v: [] };
 
 http.createServer(async (req, res) => {
   const ip = getIp(req), dev = getDev(req);
@@ -198,13 +273,16 @@ http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
     if (req.method === 'GET' && p === '/api/config') return send(res, 200, { mapKey: process.env.MAP_KEY || null });
-    if (req.method === 'GET' && p === '/api/me') { touch(req, user); return send(res, 200, user ? pub(user) : {}); }
+    if (req.method === 'GET' && p === '/api/me') {
+      touch(req, user); if (!user) return send(res, 200, {});
+      crownHolder(); return send(res, 200, { ...pub(user), ...userStats(user.id) });
+    }
     if (req.method === 'GET' && p === '/api/stats') { touch(req, user); return send(res, 200, stats()); }
 
     if (req.method === 'DELETE' && p === '/api/me') {
       if (!user) return send(res, 401, { error: 'Nicht angemeldet' });
       if (user.role === 'admin') return send(res, 403, { error: 'Admin-Konten werden in Render verwaltet' });
-      for (const q of ['DELETE FROM reports WHERE user_id=?', 'DELETE FROM votes WHERE user_id=?', 'DELETE FROM sessions WHERE user_id=?', 'DELETE FROM push_subs WHERE user_id=?', 'DELETE FROM users WHERE id=?']) db.prepare(q).run(user.id);
+      for (const q of ['DELETE FROM reports WHERE user_id=?', 'DELETE FROM votes WHERE user_id=?', 'DELETE FROM sessions WHERE user_id=?', 'DELETE FROM push_subs WHERE user_id=?', 'DELETE FROM history WHERE user_id=?', 'DELETE FROM points_log WHERE user_id=?', 'DELETE FROM seen WHERE author_id=?', 'DELETE FROM friends WHERE user_id=? OR friend_id=?', 'DELETE FROM users WHERE id=?']) { const st = db.prepare(q); st.run(...Array(q.split('?').length - 1).fill(user.id)); }
       return send(res, 200, { ok: true }, { 'Set-Cookie': 'sid=; HttpOnly; Path=/; Max-Age=0' });
     }
 
@@ -235,21 +313,87 @@ http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && p === '/api/leaderboard') {
-      // Bestenliste: Nutzer mit den meisten Punkten (ohne Admins und gesperrte Konten)
-      const now = Date.now(), W = "role<>'admin' AND trust>0 AND (banned IS NOT 1 OR (ban_until IS NOT NULL AND ban_until<?))";
-      const top = db.prepare(`SELECT name, trust FROM users WHERE ${W} ORDER BY trust DESC, created ASC LIMIT 20`).all(now);
+      // Bestenliste: gesamt (Punkte), diese Woche (gesammelte Punkte) oder Freunde. Ohne Admins und gesperrte Konten.
+      const now = Date.now(), scope = url.searchParams.get('scope'), crown = crownHolder(), cr = id => id === crown ? 1 : undefined;
+      if (scope === 'week' || scope === 'friends') {
+        let list;
+        if (scope === 'week') list = weekBoard(weekStart(), now + 1).map(x => ({ id: x.id, name: x.name, trust: x.trust, pts: x.pts }));
+        else {
+          if (!user) return send(res, 401, { error: 'Bitte zuerst anmelden' });
+          list = db.prepare(`SELECT id, name, trust FROM users WHERE (id IN (SELECT friend_id FROM friends WHERE user_id=?) OR id=?) AND ${BOARD} ORDER BY trust DESC`).all(user.id, user.id, now);
+        }
+        const out = list.map(x => ({ name: x.name, trust: x.trust, pts: x.pts, crown: cr(x.id) }));
+        const i = user ? list.findIndex(x => x.id === user.id) : -1;
+        return send(res, 200, { scope, top: out.slice(0, 50), me: i >= 0 ? { ...out[i], rank: i + 1 } : null, weekStart: weekStart() });
+      }
+      const W = "trust>0 AND " + BOARD;
+      const top = db.prepare(`SELECT id, name, trust FROM users WHERE ${W} ORDER BY trust DESC, created ASC LIMIT 20`).all(now);
       let mine = null;
       if (user && user.role !== 'admin' && !user.banned && user.trust > 0)
-        mine = { name: user.name, trust: user.trust, rank: db.prepare(`SELECT COUNT(*) c FROM users WHERE ${W} AND trust>?`).get(now, user.trust).c + 1 };
-      return send(res, 200, { top, me: mine });
+        mine = { name: user.name, trust: user.trust, crown: cr(user.id), rank: db.prepare(`SELECT COUNT(*) c FROM users WHERE ${W} AND trust>?`).get(now, user.trust).c + 1 };
+      return send(res, 200, { scope: 'all', top: top.map(x => ({ name: x.name, trust: x.trust, crown: cr(x.id) })), me: mine });
+    }
+
+    if (req.method === 'GET' && p === '/api/heat') {
+      // Hotspots der letzten 30 Tage (nur Kontrollen, Radar und Streifen), in Zellen von ca. 500 m zusammengefasst
+      if (Date.now() - heatCache.t > 300000) {
+        const rows = db.prepare('SELECT ROUND(lat*200)/200.0 la, ROUND(lng*200)/200.0 ln, COUNT(*) n FROM history WHERE t>? AND cat IN (?,?,?) GROUP BY la, ln ORDER BY n DESC LIMIT 1500')
+          .all(Date.now() - 30 * 864e5, CATS[0], CATS[1], CATS[4]);
+        heatCache = { t: Date.now(), v: rows.map(r => [r.la, r.ln, r.n]) };
+      }
+      return send(res, 200, heatCache.v);
+    }
+
+    if (req.method === 'GET' && p === '/api/recap') {
+      if (!user) return send(res, 401, { error: 'Bitte zuerst anmelden' });
+      const now = Date.now(), since = now - 7 * 864e5;
+      const h = db.prepare('SELECT lat, lng, cat, loc, t FROM history WHERE user_id=? AND t>?').all(user.id, since);
+      const pts = db.prepare('SELECT COALESCE(SUM(CASE WHEN d>0 THEN d ELSE 0 END),0) plus FROM points_log WHERE user_id=? AND t>?').get(user.id, since).plus;
+      const warned = db.prepare('SELECT COUNT(*) c FROM seen WHERE author_id=? AND t>?').get(user.id, since).c;
+      const mode = a => { const m = new Map(); let b = null, bn = 0; for (const x of a) { const v = (m.get(x) || 0) + 1; m.set(x, v); if (v > bn) { b = x; bn = v; } } return b; };
+      const wb = weekBoard(weekStart(), now + 1), wi = wb.findIndex(x => x.id === user.id);
+      return send(res, 200, { reports: h.length, points: pts, warned, topLoc: mode(h.map(r => r.loc).filter(l => l && l !== 'Aktueller Standort')),
+        topCat: mode(h.map(r => r.cat)), topHour: h.length ? mode(h.map(r => viennaHour(r.t))) : null,
+        center: h.length ? [h.reduce((a, r) => a + r.lat, 0) / h.length, h.reduce((a, r) => a + r.lng, 0) / h.length] : null,
+        weekRank: wi >= 0 ? wi + 1 : null, badges: userStats(user.id).badges.filter(b => b.got).length });
+    }
+
+    if (p === '/api/friends' || p.startsWith('/api/friends/')) {
+      if (!user) return send(res, 401, { error: 'Bitte zuerst anmelden' });
+      if (req.method === 'GET' && p === '/api/friends') {
+        // Online-Status nur, wenn ihr euch gegenseitig hinzugefügt habt
+        const now = Date.now(), crown = crownHolder();
+        const rows = db.prepare(`SELECT u.id, u.name, u.trust, u.role, u.last_seen, EXISTS(SELECT 1 FROM friends g WHERE g.user_id=u.id AND g.friend_id=?) mutual,
+          (SELECT COALESCE(SUM(d),0) FROM points_log WHERE user_id=u.id AND t>=?) wk FROM friends f JOIN users u ON u.id=f.friend_id WHERE f.user_id=? ORDER BY u.name`).all(user.id, weekStart(), user.id);
+        return send(res, 200, rows.map(x => ({ name: x.name, trust: x.trust, role: x.role, wk: x.wk, mutual: !!x.mutual, crown: x.id === crown ? 1 : undefined,
+          online: x.mutual ? !!x.last_seen && now - x.last_seen < 180000 : undefined })));
+      }
+      if (req.method === 'POST' && p === '/api/friends') {
+        if (limited('u' + user.id, 'friend', 30)) return send(res, 429, { error: 'Zu viele Aktionen' });
+        const d = await readBody(req), f = db.prepare('SELECT id, name FROM users WHERE name=?').get(String(d && d.name || '').trim());
+        if (!f) return send(res, 404, { error: 'Diesen Nutzer gibt es nicht' });
+        if (f.id === user.id) return send(res, 400, { error: 'Das bist du selbst 😉' });
+        if (db.prepare('SELECT COUNT(*) c FROM friends WHERE user_id=?').get(user.id).c >= 100) return send(res, 400, { error: 'Maximal 100 Freunde' });
+        db.prepare('INSERT OR IGNORE INTO friends VALUES(?,?,?)').run(user.id, f.id, Date.now());
+        return send(res, 200, { ok: true, name: f.name });
+      }
+      const fm = p.match(/^\/api\/friends\/([A-Za-z0-9_]{3,20})$/);
+      if (req.method === 'DELETE' && fm) {
+        db.prepare('DELETE FROM friends WHERE user_id=? AND friend_id=(SELECT id FROM users WHERE name=?)').run(user.id, fm[1]);
+        return send(res, 200, { ok: true });
+      }
+      return send(res, 404, { error: 'Unbekannt' });
     }
 
     if (req.method === 'GET' && p === '/api/reports') {
       touch(req, user);
       const rows = db.prepare(`SELECT r.*, u.name AS author, u.trust AS atrust, u.role AS arole FROM reports r LEFT JOIN users u ON u.id=r.user_id
         WHERE r.t > ? ORDER BY r.t DESC LIMIT 300`).all(Date.now() - TTL);
-      const out = [];
-      for (const { user_id, reason, ...r } of rows) { const st = stateOf(r, { trust: r.atrust, role: r.arole }); if (!st.hidden) out.push({ ...r, conf: st.conf }); }
+      const out = [], crown = crownHolder(), fr = new Set(user ? db.prepare('SELECT friend_id FROM friends WHERE user_id=?').all(user.id).map(x => x.friend_id) : []);
+      for (const { user_id, reason, ...r } of rows) {
+        const st = stateOf(r, { trust: r.atrust, role: r.arole });
+        if (!st.hidden) out.push({ ...r, conf: st.conf, acrown: user_id && user_id === crown ? 1 : undefined, friend: fr.has(user_id) ? 1 : undefined });
+      }
       return send(res, 200, out);
     }
 
@@ -278,7 +422,7 @@ http.createServer(async (req, res) => {
           try { db.prepare('INSERT INTO votes VALUES(?,?,?)').run(user.id, t0.id, 'still'); }
           catch { return send(res, 200, { ok: true, merged: true }); }
           db.prepare('UPDATE reports SET still = still + ? WHERE id=?').run(wOf(user), t0.id);
-          addTrust(t0.user_id, 1);
+          addTrust(t0.user_id, 1); confirmed(t0.user_id);
           if (t0.flag && (t0.still || 0) + wOf(user) >= 2) db.prepare('UPDATE reports SET flag=0 WHERE id=?').run(t0.id);
           return send(res, 200, { ok: true, merged: true });
         }
@@ -286,6 +430,8 @@ http.createServer(async (req, res) => {
       }
       db.prepare('INSERT INTO reports(lat,lng,loc,cat,note,t,dir,dest,user_id,flag,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
         .run(lat, lng, loc, d.cat, note, Date.now(), dir, dest, user.id, flag, reason);
+      db.prepare('INSERT INTO history(user_id,lat,lng,cat,loc,t) VALUES(?,?,?,?,?,?)').run(user.id, lat, lng, d.cat, loc, Date.now());
+      db.prepare('UPDATE users SET reports_total=reports_total+1 WHERE id=?').run(user.id);
       if (!flag) { try { notify({ lat, lng, loc, cat: d.cat, dest }, user); } catch (e) { console.error(e.message); } }
       return send(res, 201, { ok: true, flagged: !!flag });
     }
@@ -302,11 +448,26 @@ http.createServer(async (req, res) => {
       const au = db.prepare('SELECT trust, role FROM users WHERE id=?').get(r.user_id);
       const before = stateOf(r, au), w = wOf(user);
       db.prepare(`UPDATE reports SET ${m[2]} = ${m[2]} + ? WHERE id=?`).run(w, r.id);
-      if (m[2] === 'still') addTrust(r.user_id, 1);
+      if (m[2] === 'still') { addTrust(r.user_id, 1); confirmed(r.user_id); }
       if (m[2] === 'fake') addTrust(r.user_id, -2);
       const r2 = db.prepare('SELECT * FROM reports WHERE id=?').get(r.id);
       if (!before.hidden && stateOf(r2, au).hidden && r2.fake > 0) addTrust(r.user_id, -3);
       if (r2.flag && r2.still >= 2) db.prepare('UPDATE reports SET flag=0 WHERE id=?').run(r.id);
+      return send(res, 200, { ok: true });
+    }
+
+    m = p.match(/^\/api\/reports\/(\d+)\/seen$/);
+    if (req.method === 'POST' && m) {
+      // Jemand wurde vor dieser Meldung gewarnt: zählt einmal pro Nutzer bzw. Gerät
+      const k = user ? 'u' + user.id : dev ? 'd' + dev : null;
+      if (!k || limited(ip, 'seen', 120)) return send(res, 200, { ok: true });
+      const r = db.prepare('SELECT id, user_id, warned FROM reports WHERE id=?').get(+m[1]);
+      if (!r || !r.user_id || (user && user.id === r.user_id)) return send(res, 200, { ok: true });
+      try { db.prepare('INSERT INTO seen VALUES(?,?,?,?)').run(r.id, k, r.user_id, Date.now()); } catch { return send(res, 200, { ok: true }); }
+      db.prepare('UPDATE reports SET warned=warned+1 WHERE id=?').run(r.id);
+      db.prepare('UPDATE users SET warned_total=warned_total+1 WHERE id=?').run(r.user_id);
+      const n = (r.warned || 0) + 1;
+      if ([1, 5, 10, 25, 50, 100].includes(n)) notifyUser(r.user_id, '🙌 Danke!', n === 1 ? 'Deine Meldung hat gerade einen Fahrer gewarnt.' : `Deine Meldung hat schon ${n} Fahrer gewarnt.`);
       return send(res, 200, { ok: true });
     }
 
