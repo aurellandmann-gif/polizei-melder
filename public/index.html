@@ -91,11 +91,29 @@ body.fs #fsx{display:block}
 .prow{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:8px 0}.prow input{width:110px;padding:8px}
 .ban-f{border:1px solid var(--bd);border-radius:12px;padding:10px;margin-top:8px;background:var(--surface)}.ban-f label{display:block;font-size:14px;margin:6px 0}.ban-f input[type=checkbox]{width:auto;padding:0;margin-right:8px}.ban-f input,.ban-f select{margin-top:6px}
 .lg{font-size:13px;padding:8px 0;border-bottom:1px solid var(--bd)}.lg b{font-weight:650}
+@media(max-width:380px){.ib{width:32px}.login{padding:9px 10px}}
+#lbm{position:fixed;left:0;right:0;bottom:0;z-index:2000;background:var(--surface);border-radius:28px 28px 0 0;padding:20px 18px calc(18px + env(safe-area-inset-bottom));box-shadow:0 -14px 50px rgba(0,0,0,.4);transform:translateY(110%);transition:transform .35s cubic-bezier(.2,.8,.2,1);max-height:90dvh;overflow-y:auto}#lbm.open{transform:none}
+.lbr{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:16px;background:var(--bg);margin-bottom:6px}.lbr.me{box-shadow:inset 0 0 0 2px var(--ac)}
+.lbr .rk{width:34px;text-align:center;font-weight:800;font-size:17px;flex:none}.lbr .nm{flex:1;min-width:0}.lbr .nm b{display:block;overflow:hidden;text-overflow:ellipsis}.lbr .nm small{font-size:12px}.lbr .pt{font-weight:800;white-space:nowrap}
+#drv{display:none}body.drive #drv{display:block}
+body.drive #top,body.drive #chips,body.drive #sheet,body.drive #fsx,body.drive #attr{display:none}
+body.drive #map{pointer-events:none;transition:transform .6s linear}
+body.drive #map img.leaflet-marker-icon,body.drive #map img.leaflet-marker-shadow{display:none}
+body.drive #map .pin{rotate:var(--hd,0deg);transition:rotate .6s linear}
+body.drive #alert{top:calc(84px + env(safe-area-inset-top))}body.drive #toast{top:calc(90px + env(safe-area-inset-top))}
+#dtop{position:fixed;left:12px;right:12px;top:calc(10px + env(safe-area-inset-top));z-index:1250;display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--glass);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);border:1px solid var(--bd);border-radius:20px;box-shadow:var(--shadow)}
+#dspd{font-size:26px;letter-spacing:-.5px;white-space:nowrap}#dnext{flex:1;min-width:0;text-align:right;font-weight:650;font-size:15px}
+#dme{position:fixed;z-index:1240;width:0;height:0;border-left:13px solid transparent;border-right:13px solid transparent;border-bottom:30px solid #1d4ed8;transform:translate(-50%,-60%);filter:drop-shadow(0 0 2px #fff) drop-shadow(0 2px 4px rgba(0,0,0,.4))}
+#dbot{position:fixed;left:0;right:0;bottom:0;z-index:1250;padding:12px 12px calc(10px + env(safe-area-inset-bottom));background:var(--glass);-webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px);border:1px solid var(--bd);border-bottom:0;border-radius:24px 24px 0 0;box-shadow:0 -10px 40px rgba(15,23,42,.2)}
+#dq{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+#dq button{border:0;border-radius:20px;min-height:92px;padding:12px 4px;color:#fff;font:800 16px system-ui;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;box-shadow:0 6px 16px rgba(0,0,0,.25)}#dq button span{font-size:34px}#dq button:active{transform:scale(.96)}
+#dx{width:100%;margin-top:10px;border:1px solid var(--bd);background:var(--surface);color:var(--tx);border-radius:16px;padding:14px;font:700 15px system-ui;cursor:pointer}
+.dh{text-align:center;font-size:11px;color:var(--mu);margin-top:6px}
 </style></head><body>
-<div id="top"><div class="brand"><b>🚓 Melder</b><span id="count" style="display:none">0</span></div><div class="tr"><button class="ib" id="adm" aria-label="Admin" style="display:none">🛡️</button><button class="ib" id="help" aria-label="Hilfe">?</button><button class="ib" id="share" aria-label="Teilen">↗</button><button class="login" id="acct">Anmelden</button></div><div class="live" id="live"><span class="gd"></span><span id="livet">…</span></div></div>
+<div id="top"><div class="brand"><b>🚓 Melder</b><span id="count" style="display:none">0</span></div><div class="tr"><button class="ib" id="adm" aria-label="Admin" style="display:none">🛡️</button><button class="ib" id="lb" aria-label="Bestenliste">🏆</button><button class="ib" id="help" aria-label="Hilfe">?</button><button class="ib" id="share" aria-label="Teilen">↗</button><button class="login" id="acct">Anmelden</button></div><div class="live" id="live"><span class="gd"></span><span id="livet">…</span></div></div>
 <div id="chips"></div>
 <div id="map"></div><div id="alert"></div><button id="fsx">✕ Vollbild beenden</button><div id="attr">© OpenStreetMap-Mitwirkende</div>
-<section id="sheet"><div class="fabs"><button class="loc" id="fsb" aria-label="Vollbild">⛶</button><button class="loc" id="loc2" aria-label="Mein Standort">📍</button><button class="fab" id="fab">＋ Melden</button></div>
+<section id="sheet"><div class="fabs"><button class="loc" id="fsb" aria-label="Vollbild">⛶</button><button class="loc" id="loc2" aria-label="Mein Standort">📍</button><button class="loc" id="drb" aria-label="Fahrmodus">🚗</button><button class="fab" id="fab">＋ Melden</button></div>
 <div id="sin"><div id="handle"><i></i></div><div id="sh"><b>In deiner Nähe</b><span class="mu" id="sub"></span></div><div id="list"></div>
 <div id="foot"><a href="/impressum">Impressum</a> · <a href="/datenschutz">Datenschutz</a> · Karte © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></div></div></section>
 <div id="modal"><button class="x" id="close" aria-label="Schließen">×</button><b class="mt">Neue Meldung</b><div class="mu" style="margin-top:12px">⚡ Schnell an deinem Standort</div><div id="quick"></div><div class="mu" style="margin:14px 0 8px">…oder genau beschreiben</div>
@@ -119,8 +137,12 @@ body.fs #fsx{display:block}
 <ol class="hl"><li><b>Melden:</b> Auf ＋ Melden tippen. Schnell per Kachel oder mit Text wie „Kuchl Markt Polizei Richtung Hallein".</li>
 <li><b>Bestätigen:</b> 👍 macht eine Meldung grüner, 👋 und ❌ röter. Bei doppelt so vielen Gegenstimmen verschwindet sie.</li>
 <li><b>Vertrauen:</b> Wer oft richtig liegt, steigt auf: ⚪ Neu, 🔵 Zuverlässig, 🟢 Vertrauenswürdig.</li>
+<li><b>Bestenliste:</b> 🏆 oben zeigt, wer die meisten Punkte gesammelt hat.</li>
+<li><b>Fahrmodus:</b> 🚗 zeigt eine große Ansicht: Karte folgt dir in Fahrtrichtung, Tempo, nächste Meldung voraus und große Melde-Knöpfe.</li>
 <li><b>Vollbild:</b> ⛶ neben dem Standort-Knopf blendet alles außer der Karte aus.</li>
 <li><b>Als App:</b> Safari, Teilen, „Zum Home-Bildschirm".</li></ol><button class="go" id="hgo">Los geht's</button></div>
+<div id="lbm"><button class="x" id="lbx" aria-label="Schließen">×</button><b class="mt">🏆 Bestenliste</b><div class="mu" style="margin:10px 0 14px">Punkte gibt es, wenn andere deine Meldungen mit 👍 bestätigen. Falsche Meldungen kosten Punkte.</div><div id="lbb"></div></div>
+<div id="drv"><div id="dtop"><b id="dspd">– km/h</b><span id="dnext">…</span></div><i id="dme"></i><div id="dbot"><div id="dq"></div><button id="dx">✕ Fahrmodus beenden</button><div class="dh">Melden nur als Beifahrer:in oder im Stand.</div></div></div>
 <div id="toast"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script>
@@ -177,10 +199,11 @@ async function del(id,fake){if(!confirm(fake?"Als falsch löschen? Der Autor ver
 const b64=s=>{const a=atob((s+"=".repeat((4-s.length%4)%4)).replace(/-/g,"+").replace(/_/g,"/"));return Uint8Array.from([...a].map(c=>c.charCodeAt(0)))};
 const pushOK=()=>"serviceWorker"in navigator&&"PushManager"in window&&"Notification"in window;
 let wl=null;
-async function wake(){try{if(localStorage.getItem("wake")==="1"&&"wakeLock"in navigator&&!document.hidden&&!wl){wl=await navigator.wakeLock.request("screen");wl.addEventListener("release",()=>{wl=null})}}catch{}}
+async function wake(){try{if((localStorage.getItem("wake")==="1"||drive)&&"wakeLock"in navigator&&!document.hidden&&!wl){wl=await navigator.wakeLock.request("screen");wl.addEventListener("release",()=>{wl=null})}}catch{}}
 function initSettings(){const a=$("sprox"),b=$("swake");a.checked=localStorage.getItem("prox")!=="0";b.checked=localStorage.getItem("wake")==="1";
   a.onchange=()=>{try{localStorage.setItem("prox",a.checked?"1":"0")}catch{}};
   b.onchange=()=>{try{localStorage.setItem("wake",b.checked?"1":"0")}catch{}if(b.checked)wake();else if(wl){wl.release();wl=null}}}
+const hdOf=c=>(c&&c.heading!=null&&!isNaN(c.heading)&&c.speed>2)?c.heading:null;
 const warned=new Set();let lastC=null,near=false,loaded=false;
 function showAlert(r,d){const m=M[r.cat]||M["Sonstiges"],a=$("alert");
   a.textContent="⚠️ "+m.e+" "+m.s+" in "+(d<1?Math.round(d*1000)+" m":d.toFixed(1)+" km")+(r.loc?": "+r.loc:"")+(r.dest?" → "+r.dest:"");
@@ -188,7 +211,7 @@ function showAlert(r,d){const m=M[r.cat]||M["Sonstiges"],a=$("alert");
 $("alert").onclick=()=>{$("alert").style.display="none"};
 function prox(c){
   if(localStorage.getItem("prox")==="0"||!me)return;
-  const hd=(c.heading!=null&&!isNaN(c.heading)&&c.speed>2)?c.heading:null;
+  const hd=hdOf(c);
   for(const r of rows){if(warned.has(r.id)||(user&&r.author===user.name))continue;
     const d=km(me,{lat:r.lat,lng:r.lng});if(d>(hd===null?.6:1.5))continue;
     if(hd!==null&&Math.abs(((bearing(me,r)-hd+540)%360)-180)>70)continue;
@@ -226,7 +249,7 @@ async function quickSend(c){
   if(!user)return need();
   const ll=await curPos();if(!ll)return toast("Standort nicht verfügbar. Nutze die Eingabe unten.");
   try{const x=await fetch("/api/reports",H("POST",{lat:ll.lat,lng:ll.lng,loc:"Aktueller Standort",cat:c,dir,dest:dirTo,note:"",gps:{lat:ll.lat,lng:ll.lng}}));const j=await x.json().catch(()=>({}));
-    if(x.ok){toast(j.merged?"Schon gemeldet – deine Bestätigung zählt ✓":j.flagged?"Gemeldet ✓ Wird kurz geprüft":"Gemeldet ✓ Danke!");dir=null;dirTo="";buildChips();open(false);focus(ll,15);load()}else if(x.status===401)need();else toast(j.error||"Senden fehlgeschlagen")}catch{toast("Keine Verbindung")}}
+    if(x.ok){toast(j.merged?"Schon gemeldet – deine Bestätigung zählt ✓":j.flagged?"Gemeldet ✓ Wird kurz geprüft":"Gemeldet ✓ Danke!");dir=null;dirTo="";buildChips();open(false);if(!drive)focus(ll,15);load()}else if(x.status===401)need();else toast(j.error||"Senden fehlgeschlagen")}catch{toast("Keine Verbindung")}}
 
 async function loadStats(){try{const j=await (await fetch("/api/stats")).json();if(typeof j.now==="number")$("livet").textContent=j.now+" online · "+j.h3+" in den letzten 3 Std."}catch{}}
 function setFs(v){document.body.classList.toggle("fs",v);$("fsb").textContent=v?"✕":"⛶";
@@ -314,6 +337,53 @@ async function admLog(){
   for(const x of r.j){const d=mkEl("div","lg");d.append(mkEl("b","",x.action),mkEl("span","mu"," · "+(x.name||"?")+" · "+ago2(x.t)),mkEl("div","",x.detail||""));w.append(d)}
   return w;
 }
+// ---- Bestenliste ----
+const lbOpen=v=>{$("lbm").classList.toggle("open",v);if(v)lbRender()};
+function lbRow(rk,u){const r=mkEl("div","lbr"+(user&&u.name===user.name?" me":"")),n=mkEl("div","nm"),l=LV(u.trust),lv=mkEl("small","",l[0]);lv.style.color=l[1];
+  n.append(mkEl("b","",u.name),lv);r.append(mkEl("span","rk",rk<=3?["🥇","🥈","🥉"][rk-1]:rk+"."),n,mkEl("span","pt",u.trust+" Pkt"));return r}
+async function lbRender(){
+  const b=$("lbb");b.textContent="";b.append(mkEl("div","mu","Lädt…"));let j;
+  try{const x=await fetch("/api/leaderboard");j=await x.json();if(!x.ok||!Array.isArray(j.top))throw 0}catch{b.textContent="Bestenliste konnte nicht geladen werden.";return}
+  b.textContent="";
+  if(!j.top.length)b.append(mkEl("div","empty","Noch hat niemand Punkte gesammelt."));
+  let rk=0,prev=null;j.top.forEach((u,i)=>{if(u.trust!==prev){rk=i+1;prev=u.trust}b.append(lbRow(rk,u))});
+  if(j.me&&!j.top.some(u=>u.name===j.me.name)){const g=mkEl("div","mu","…");g.style.textAlign="center";b.append(g,lbRow(j.me.rank,j.me))}
+  const hint=!user?"Melde dich an und sammle Punkte, um auf die Liste zu kommen.":user.role!=="admin"&&!j.me?"Du hast noch keine Punkte. Wenn andere deine Meldungen bestätigen, steigst du auf.":"";
+  if(hint){const h=mkEl("div","mu",hint);h.style.marginTop="12px";b.append(h)}
+}
+$("lb").onclick=()=>lbOpen(true);$("lbx").onclick=()=>lbOpen(false);
+
+// ---- Fahrmodus: Karte folgt dem Standort und dreht sich in Fahrtrichtung ----
+let drive=false,hdU=0;
+function dLayout(){if(!drive)return;
+  // Kartenfläche größer als der Bildschirm, damit beim Drehen keine leeren Ecken entstehen. Eigene Position sitzt etwas unter der Mitte.
+  const W=innerWidth,H=innerHeight,cx=W/2,cy=H*.6,D=Math.ceil(2*Math.hypot(Math.max(cx,W-cx),Math.max(cy,H-cy))),s=$("map").style;
+  s.inset="auto";s.left=(cx-D/2)+"px";s.top=(cy-D/2)+"px";s.width=s.height=D+"px";$("dme").style.left=cx+"px";$("dme").style.top=cy+"px";
+  map.invalidateSize({pan:false});if(me)map.setView(me,map.getZoom(),{animate:false})}
+function dRot(h){hdU+=((h-hdU)%360+540)%360-180;$("map").style.transform="rotate("+(-hdU)+"deg)";document.body.style.setProperty("--hd",hdU+"deg")}
+function dInfo(c){
+  const sp=c&&c.speed!=null&&!isNaN(c.speed)?Math.round(c.speed*3.6):null;$("dspd").textContent=(sp==null?"–":sp)+" km/h";
+  if(!me){$("dnext").textContent="Standort wird ermittelt…";return}
+  const hd=hdOf(c);let best=null,bd=1e9;
+  for(const r of rows){if(user&&r.author===user.name)continue;const d=km(me,r);if(d>10||d>=bd)continue;
+    if(hd!==null&&Math.abs(((bearing(me,r)-hd+540)%360)-180)>60)continue;best=r;bd=d}
+  const m=best&&(M[best.cat]||M["Sonstiges"]);
+  $("dnext").textContent=best?m.e+" "+m.s+" · "+(bd<1?Math.round(bd*1000)+" m":bd.toFixed(1).replace(".",",")+" km"):"✅ Nichts "+(hd===null?"in der Nähe":"voraus")}
+function dUpd(c){if(!drive)return;dInfo(c);if(!me)return;
+  const h=hdOf(c);if(h!==null)dRot(h);
+  const z=c&&c.speed>25?14:c&&c.speed>14?15:16;
+  if(map.getZoom()!==z)map.setView(me,z,{animate:false});else map.panTo(me,{animate:true,duration:.8})}
+function setDrive(v){
+  if(v&&document.body.classList.contains("fs"))setFs(false);
+  drive=v;document.body.classList.toggle("drive",v);map.closePopup();
+  if(v){dLayout();map.setView(me||map.getCenter(),16,{animate:false});dUpd(lastC||{});wake();if(!me)toast("Standort wird ermittelt…")}
+  else{const s=$("map").style;s.cssText="";document.body.style.removeProperty("--hd");hdU=0;map.invalidateSize({pan:false});if(me)focus(me,14);
+    if(wl&&localStorage.getItem("wake")!=="1"){wl.release();wl=null}}
+}
+for(const i of [0,1,4]){const c=C[i],b=mkEl("button");b.style.background=c[3];b.append(mkEl("span","",c[2]),c[1]);b.onclick=()=>quickSend(c[0]);$("dq").append(b)}
+$("drb").onclick=()=>setDrive(true);$("dx").onclick=()=>setDrive(false);
+addEventListener("resize",dLayout);
+
 $("adm").onclick=()=>admOpen(true);$("admx").onclick=()=>admOpen(false);
 const helpOpen=v=>$("helpm").classList.toggle("open",v);
 const toast=t=>{const e=$("toast");e.textContent=t;e.classList.add("on");setTimeout(()=>e.classList.remove("on"),2800)};
@@ -349,8 +419,8 @@ function geo(ok){
   navigator.geolocation.watchPosition(p=>{
     const ll=L.latLng(p.coords.latitude,p.coords.longitude),first=!me;me=ll;
     if(meM)meM.setLatLng(ll);else meM=L.circleMarker(ll,{radius:8,color:"#fff",weight:2,fillColor:"#1d4ed8",fillOpacity:1}).addTo(map);
-    if(first&&!userSet){setPos(ll);focus(ll,13)}
-    if(first){render(false);refreshPush()}lastC=p.coords;prox(p.coords);
+    if(first&&!userSet){setPos(ll);if(!drive)focus(ll,13)}
+    if(first){render(false);refreshPush()}lastC=p.coords;prox(p.coords);dUpd(p.coords);
   },()=>{},{enableHighAccuracy:true,maximumAge:15000});
 }
 async function vote(id,k){
@@ -397,7 +467,7 @@ function render(full){
 async function load(){
   try{const a=await (await fetch("/api/reports")).json();if(!Array.isArray(a))throw 0;
     const n=JSON.stringify(a.map(r=>[r.id,r.still,r.gone,r.fake,r.atrust,r.conf,user&&user.name]));rows=a;loaded=true;if(me)prox(lastC||{});
-    if(n!==sig){sig=n;render(true)}else render(false);
+    if(n!==sig){sig=n;render(true)}else render(false);if(drive)dInfo(lastC||{});
   }catch{$("list").textContent="Meldungen konnten nicht geladen werden."}
 }
 const bearing=(a,b)=>{const q=x=>x*Math.PI/180,dg=q(b.lng-a.lng),y=Math.sin(dg)*Math.cos(q(b.lat)),x=Math.cos(q(a.lat))*Math.sin(q(b.lat))-Math.sin(q(a.lat))*Math.cos(q(b.lat))*Math.cos(dg);return(Math.atan2(y,x)*180/Math.PI+360)%360};
