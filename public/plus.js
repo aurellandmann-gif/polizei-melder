@@ -83,7 +83,9 @@ const TILT = 35, PERS = 1200;
 dLayout = function () {
   if (!drive) return;
   // Kartenfläche größer als der Bildschirm: beim Drehen keine leeren Ecken, in 3D bis zum oberen Rand sichtbar
-  const W = innerWidth, Hh = innerHeight, cx = W / 2, cy = Hh * (tilt ? .68 : .6), s = $("map").style;
+  // Eigene Position im freien Bereich zwischen Anzeige oben und Knöpfen unten (offsetTop ignoriert die Einblend-Animation)
+  const top = $("dtop").offsetTop + $("dtop").offsetHeight, bot = $("dbot").offsetTop || innerHeight * .7;
+  const W = innerWidth, Hh = innerHeight, cx = W / 2, cy = top + (bot - top) * (tilt ? .8 : .72), s = $("map").style;
   let R = Math.hypot(Math.max(cx, W - cx), Math.max(cy, Hh - cy));
   if (tilt) { const a = TILT * Math.PI / 180; R = Math.max(R, 1.06 * cy * PERS / (PERS * Math.cos(a) - cy * Math.sin(a))); }
   const D = Math.ceil(2 * R);
