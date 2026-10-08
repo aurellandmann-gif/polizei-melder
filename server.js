@@ -234,6 +234,16 @@ http.createServer(async (req, res) => {
       return send(res, 200, { ok: true }, { 'Set-Cookie': 'sid=; HttpOnly; Path=/; Max-Age=0' });
     }
 
+    if (req.method === 'GET' && p === '/api/leaderboard') {
+      // Bestenliste: Nutzer mit den meisten Punkten (ohne Admins und gesperrte Konten)
+      const now = Date.now(), W = "role<>'admin' AND trust>0 AND (banned IS NOT 1 OR (ban_until IS NOT NULL AND ban_until<?))";
+      const top = db.prepare(`SELECT name, trust FROM users WHERE ${W} ORDER BY trust DESC, created ASC LIMIT 20`).all(now);
+      let mine = null;
+      if (user && user.role !== 'admin' && !user.banned && user.trust > 0)
+        mine = { name: user.name, trust: user.trust, rank: db.prepare(`SELECT COUNT(*) c FROM users WHERE ${W} AND trust>?`).get(now, user.trust).c + 1 };
+      return send(res, 200, { top, me: mine });
+    }
+
     if (req.method === 'GET' && p === '/api/reports') {
       touch(req, user);
       const rows = db.prepare(`SELECT r.*, u.name AS author, u.trust AS atrust, u.role AS arole FROM reports r LEFT JOIN users u ON u.id=r.user_id
