@@ -7,7 +7,7 @@ const on = (k, def) => LS.get(k, def ? "1" : "0") === "1";
 const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const fmtD = d => d < 1 ? Math.round(d * 100) * 10 + " m" : d.toFixed(1).replace(".", ",") + " km";
 const sayDist = d => d < 1 ? Math.max(50, Math.round(d * 20) * 50) + " Metern" : (d < 10 ? d.toFixed(1).replace(".", ",") : Math.round(d)) + " Kilometern";
-const SAY = { [C[0][0]]: "Radarkontrolle", [C[1][0]]: "Verkehrskontrolle", [C[2][0]]: "Unfall", [C[3][0]]: "Straßensperre", [C[4][0]]: "Polizeistreife", [C[5][0]]: "Stau", [C[6][0]]: "Wildwechsel", [C[7][0]]: "Baustelle", [C[8][0]]: "Meldung" };
+const SAY = { [C[0][0]]: "Radarkontrolle", [C[1][0]]: "Verkehrskontrolle", [C[2][0]]: "Unfall", [C[3][0]]: "Straßensperre", [C[4][0]]: "Polizeistreife", [C[5][0]]: "Stau", [C[6][0]]: "Wildwechsel", [C[7][0]]: "Baustelle", [C[8][0]]: "Meldung", fixed: "fester Blitzer" };
 const say = c => SAY[c] || "Meldung";
 
 // ---------- Haptik (Android; das iPhone erlaubt Web-Apps kein Vibrieren) ----------
@@ -65,18 +65,18 @@ dInfo = function (c) {
   if (lim.over === 3 && Date.now() - lim.said > 60000) { lim.said = Date.now(); speak("Achtung, Tempolimit " + lim.v); }
   if (!me) { $("dnext").textContent = "Standort wird ermittelt…"; ring(null, "…"); return; }
   const hd = hdOf(c); let best = null, bd = 1e9;
-  for (const r of rows) {
+  for (const r of rows.concat(fxCands(hd))) {
     if (user && r.author === user.name) continue; const d = km(me, r); if (d > 10 || d >= bd) continue;
     if (hd !== null && Math.abs(((bearing(me, r) - hd + 540) % 360) - 180) > 60) continue; best = r; bd = d;
   }
-  const m = best && (M[best.cat] || M["Sonstiges"]);
+  const m = best && (best.fx ? fxLabel(best.fx) : M[best.cat] || M["Sonstiges"]);
   $("dnext").textContent = best ? m.s + "\n" + fmtD(bd) : "Nichts\n" + (hd === null ? "in der Nähe" : "voraus");
   ring(best ? bd : null, best ? m.e : "✓");
   const danger = !!best && bd < .3; document.body.classList.toggle("danger", danger);
   if (danger && !near2.has(best.id)) { near2.add(best.id); speak("Achtung, " + say(best.cat) + " in " + sayDist(bd)); hap([300, 120, 300]); }
 };
 const _dUpd = dUpd;
-dUpd = function (c) { _dUpd(c); if (drive) limUpd(); };
+dUpd = function (c) { _dUpd(c); fxProx(c); if (drive) limUpd(); };
 
 let tilt = on("tilt", 0);
 const TILT = 35, PERS = 1200;
@@ -195,7 +195,7 @@ async function routeCheck() {
   for (let i = 1; i < g.length; i++) cum[i] = cum[i - 1] + km({ lat: g[i - 1][0], lng: g[i - 1][1] }, { lat: g[i][0], lng: g[i][1] });
   // Meldungen höchstens 250 m neben der Strecke, mit Entfernung entlang der Strecke
   const hits = [];
-  for (const rep of rows) {
+  for (const rep of rows.concat(fxCands(null))) {
     let best = 1e9, at = 0;
     for (let i = 1; i < g.length; i++) { const [d, f] = segDist(rep, g[i - 1], g[i]); if (d < best) { best = d; at = cum[i - 1] + f * (cum[i] - cum[i - 1]); } }
     if (best < .25) hits.push({ r: rep, at });
@@ -209,9 +209,9 @@ async function routeCheck() {
     mkEl("span", "", "📏 " + Math.round(rt.distance / 1000) + " km · ⏱ " + Math.round(rt.duration / 60) + " Min. bis " + (to.n || q).split(",")[0]));
   b.append(sum);
   hits.forEach((h, i) => {
-    const m = M[h.r.cat] || M["Sonstiges"], row = mkEl("div", "lbr"), n = mkEl("div", "nm");
+    const m = h.r.fx ? fxLabel(h.r.fx) : M[h.r.cat] || M["Sonstiges"], row = mkEl("div", "lbr"), n = mkEl("div", "nm");
     row.style.setProperty("--i", i); row.style.cursor = "pointer";
-    n.append(mkEl("b", "", m.e + " " + (h.r.loc || m.s)), mkEl("small", "", m.s + " · " + ago(h.r.t)));
+    n.append(mkEl("b", "", m.e + " " + (h.r.loc || m.s)), mkEl("small", "", h.r.fx ? "Stationär · von Admins bestätigt" : m.s + " · " + ago(h.r.t)));
     row.append(n, mkEl("span", "pt", "nach " + fmtD(h.at)));
     row.onclick = () => { ovSet("rtm", false); map.setView([h.r.lat, h.r.lng], 15); };
     b.append(row);
@@ -567,6 +567,148 @@ $("rcsh").onclick = async () => {
     await shareCanvas(cv, "wochenrueckblick.png", "Meine Woche im Polizei-Melder 🚓 " + location.origin);
   } catch { toast("Bild konnte nicht erstellt werden"); }
 };
+
+
+// ---------- Feste Blitzer (nach Prüfung durch Admins dauerhaft auf der Karte) ----------
+const FXK = { radar: ["Fester Blitzer", "📸"], section: ["Abschnittskontrolle", "📏"], red: ["Rotlicht-Blitzer", "🚦"] };
+let fixed = [], fxShow = true;
+const fxLayer = L.layerGroup().addTo(map), warnedF = new Set();
+function fxLabel(f) { return ({ s: (FXK[f.kind] || FXK.radar)[0] + (f.speed ? " " + f.speed : ""), e: (FXK[f.kind] || FXK.radar)[1] }); }
+// Bestätigte Blitzer als Ziele für Warnung, Fahrmodus und Route; einseitig messende nur in passender Fahrtrichtung
+function fxCands(hd) {
+  return fixed.filter(f => f.status === "ok" && (hd == null || f.dir == null || Math.abs(((hd - f.dir + 540) % 360) - 180) <= 60))
+    .map(f => ({ id: "f" + f.id, lat: f.lat, lng: f.lng, cat: "fixed", fx: f }));
+}
+async function fxLoad() { try { const a = await (await fetch("/api/fixed")).json(); if (Array.isArray(a)) { fixed = a; fxDraw(); } } catch {} }
+function fxCard(f) {
+  const k = FXK[f.kind] || FXK.radar, d = mkEl("div", "card pop"), top = mkEl("div", "ch"), ico = mkEl("span", "ico", k[1]), mid = mkEl("div", "cm");
+  ico.style.background = "#11182722"; mid.append(mkEl("div", "ttl", f.loc || k[0]), mkEl("div", "mu", k[0] + (f.speed ? " · " + f.speed + " km/h" : "")));
+  top.append(ico, mid); if (f.speed) top.append(mkEl("span", "fxsp", String(f.speed))); d.append(top);
+  if (f.dir != null) d.append(mkEl("div", "dr", AR[ai(f.dir)] + " misst in Pfeilrichtung"));
+  if (f.note) { const n = mkEl("div", "", f.note); n.style.marginTop = "8px"; d.append(n); }
+  const st = mkEl("div", "meta", f.status === "ok" ? "✅ Von Admins bestätigt · stationär" : "⏳ Dein Eintrag wartet auf Prüfung durch Admins"); d.append(st);
+  const ar = mkEl("div", "ar2");
+  if (f.status === "ok" && user) {
+    const g = mkEl("button", "sm", "🚫 Gibt's nicht mehr");
+    g.onclick = async () => { const x = await fetch("/api/fixed/" + f.id + "/gone", H("POST")).catch(() => null), j = x ? await x.json().catch(() => ({})) : {}; toast(x && x.ok ? "Danke, ein Admin schaut sich das an" : j.error || "Fehler"); };
+    ar.append(g);
+  }
+  if (user && user.role === "admin") { const b = mkEl("button", "sm", "🗑 Löschen"); b.style.color = "#dc2626"; b.onclick = async () => { if (!confirm("Diesen festen Blitzer löschen?")) return; await adm("fixed/" + f.id, "DELETE"); map.closePopup(); toast("Gelöscht"); fxLoad(); }; ar.append(b); }
+  if (ar.childElementCount) d.append(ar);
+  return d;
+}
+function fxDraw() {
+  fxLayer.clearLayers(); if (!fxShow) return;
+  for (const f of fixed) {
+    const k = FXK[f.kind] || FXK.radar, arrow = f.dir != null ? `<i class="fxa" style="rotate:${f.dir}deg"></i>` : "";
+    const html = `<div class="fx${f.status !== "ok" ? " pend" : ""}">${arrow}<div class="fxi"><b>${k[1]}</b>${f.speed ? `<span>${f.speed}</span>` : ""}</div></div>`;
+    L.marker([f.lat, f.lng], { icon: L.divIcon({ className: "", html, iconSize: [40, 40], iconAnchor: [20, 20] }), zIndexOffset: -200 }).bindPopup(() => fxCard(f)).addTo(fxLayer);
+  }
+}
+// Warnung vor festen Blitzern; nach dem Vorbeifahren (über 2 km entfernt) wird beim nächsten Mal wieder gewarnt
+function fxProx(c) {
+  if (localStorage.getItem("prox") === "0" || !me) return;
+  const hd = hdOf(c);
+  for (const f of fixed) if (f.status === "ok" && warnedF.has(f.id) && km(me, f) > 2) warnedF.delete(f.id);
+  for (const t of fxCands(hd)) {
+    const f = t.fx; if (warnedF.has(f.id)) continue;
+    const d = km(me, f); if (d > (hd === null ? .5 : 1)) continue;
+    if (hd !== null && Math.abs(((bearing(me, f) - hd + 540) % 360) - 180) > 60) continue;
+    warnedF.add(f.id);
+    const k = FXK[f.kind] || FXK.radar, a = $("alert");
+    a.textContent = "⚠️ " + k[1] + " " + k[0] + (f.speed ? " · " + f.speed + " km/h" : "") + " in " + fmtD(d) + (f.loc ? ": " + f.loc : "");
+    a.classList.add("on"); clearTimeout(showAlert.t); showAlert.t = setTimeout(() => a.classList.remove("on"), 9000);
+    speak("Achtung, " + (f.kind === "section" ? "Abschnittskontrolle" : f.kind === "red" ? "Rotlicht-Blitzer" : "fester Blitzer") + (f.speed ? ", Tempo " + f.speed : "") + ", in " + sayDist(d));
+    hap([200, 100, 200]); const e = $("edge"); e.classList.remove("flash"); void e.offsetWidth; e.classList.add("flash");
+    break;
+  }
+}
+
+// Eintragen
+const fx = { kind: "radar", speed: 50, dir: null, dirTo: "", pos: null, pin: null };
+function fxBuild() {
+  const k = $("fxk"), sp = $("fxs"), dd = $("fxd"); k.textContent = ""; sp.textContent = ""; dd.textContent = "";
+  for (const [id, [n, e]] of Object.entries(FXK)) k.append(chip(e + " " + n, fx.kind === id, () => { fx.kind = id; fxBuild(); }));
+  for (const v of [30, 40, 50, 60, 70, 80, 100, 130, null]) sp.append(chip(v ? v + "" : "Weiß nicht", fx.speed === v, () => { fx.speed = v; fxBuild(); }));
+  const ps = fx.pos || me;
+  dd.append(chip("↔️ Beide Richtungen", fx.dir == null, () => { fx.dir = null; fx.dirTo = ""; fxBuild(); }));
+  if (ps) {
+    const best = {};
+    for (const t of T) { const d = km(ps, t); if (d < 2.5 || d > (t.t === 1 ? 300 : 60)) continue; const i = ai(bearing(ps, t)); if (!best[i] || d < best[i].d) best[i] = { t, d }; }
+    for (const { t } of Object.values(best).sort((a, b) => a.d - b.d)) { const b = Math.round(bearing(ps, t)) % 360; dd.append(chip(AR[ai(b)] + " " + t.n, fx.dirTo === t.n, () => { fx.dir = b; fx.dirTo = t.n; fxBuild(); })); }
+  }
+  $("fxpos").textContent = fx.pos ? "📍 Gewählter Punkt" + (me ? " · " + fmtD(km(me, fx.pos)) + " von dir" : "") : me ? "📍 Dein aktueller Standort" : "Standort unbekannt, bitte auf der Karte wählen";
+}
+async function fxMine() {
+  const b = $("fxmine"); if (!user) { b.textContent = ""; return; }
+  let a; try { a = await (await fetch("/api/fixed/mine")).json(); if (!Array.isArray(a)) throw 0; } catch { b.textContent = ""; return; }
+  b.textContent = ""; if (!a.length) { b.append(mkEl("div", "mu", "Noch keine Einträge.")); return; }
+  a.forEach((f, i) => {
+    const k = FXK[f.kind] || FXK.radar, r = mkEl("div", "lbr"), n = mkEl("div", "nm"); r.style.setProperty("--i", i);
+    n.append(mkEl("b", "", k[1] + " " + (f.loc || k[0])), mkEl("small", "", k[0] + (f.speed ? " · " + f.speed + " km/h" : "") + " · " + ago2(f.created) + (f.reason ? " · Grund: " + f.reason : "")));
+    r.append(n, mkEl("span", "fxst " + f.status, f.status === "ok" ? "✅ Bestätigt" : f.status === "rejected" ? "❌ Abgelehnt" : "⏳ Wartet"));
+    r.style.cursor = "pointer"; r.onclick = () => { ovSet("fxm", false); map.setView([f.lat, f.lng], 16); };
+    b.append(r);
+  });
+}
+function fxOpen() {
+  if (!user) return need();
+  if (fx.pin && !fx.pos) { map.removeLayer(fx.pin); fx.pin = null; }
+  ovSet("modal", false); ovSet("fxm", true); fxBuild(); fxMine();
+}
+$("fxopen").onclick = fxOpen; $("fxx").onclick = () => ovSet("fxm", false);
+$("fxpick").onclick = () => {
+  ovSet("fxm", false); toast("Tippe auf die Karte, wo der Blitzer steht");
+  setTimeout(() => map.once("click", e => {
+    fx.pos = e.latlng;
+    if (fx.pin) fx.pin.setLatLng(e.latlng); else fx.pin = L.marker(e.latlng, { icon: L.divIcon({ className: "", html: '<div class="fx pend"><div class="fxi"><b>📸</b></div></div>', iconSize: [40, 40], iconAnchor: [20, 20] }) }).addTo(map);
+    ovSet("fxm", true); fxBuild();
+  }), 300);
+};
+$("fxgo").onclick = async () => {
+  const ps = fx.pos || me; if (!ps) return toast("Bitte den Standort auf der Karte wählen");
+  $("fxgo").disabled = true;
+  try {
+    const x = await fetch("/api/fixed", H("POST", { lat: ps.lat, lng: ps.lng, kind: fx.kind, speed: fx.speed, dir: fx.dir, loc: $("fxloc").value.trim(), note: $("fxnote").value.trim(), gps: me ? { lat: me.lat, lng: me.lng } : undefined }));
+    const j = await x.json().catch(() => ({}));
+    if (x.ok) {
+      toast(j.status === "ok" ? "✅ Eingetragen und sofort sichtbar" : "📨 Danke! Ein Admin prüft deinen Eintrag"); hap([20, 40, 20]);
+      $("fxloc").value = ""; $("fxnote").value = ""; fx.pos = null; fx.dir = null; fx.dirTo = ""; if (fx.pin) { map.removeLayer(fx.pin); fx.pin = null; }
+      fxBuild(); fxMine(); fxLoad();
+    } else if (x.status === 401) need(); else toast(j.error || "Senden fehlgeschlagen");
+  } catch { toast("Keine Verbindung"); }
+  $("fxgo").disabled = false;
+};
+
+// Admin: Prüf-Warteschlange
+window.admFixed = async () => {
+  const r = await adm("fixed", "GET"), w = mkEl("div"); if (!r.ok) { w.textContent = r.j.error || "Fehler"; return w; }
+  const card = (f, gone) => {
+    const k = FXK[f.kind] || FXK.radar, c = mkEl("div", "card"); c.style.boxShadow = "none";
+    c.append(mkEl("div", "ttl", k[1] + " " + (f.loc || "ohne Ortsangabe")),
+      mkEl("div", "mu", k[0] + (f.speed ? " · " + f.speed + " km/h" : "") + (f.dir != null ? " · misst " + AR[ai(f.dir)] : " · beide Richtungen") + " · von " + (f.author || "?") + " · " + ago2(f.created)));
+    if (f.note) c.append(mkEl("div", "", f.note));
+    if (gone) { const g = mkEl("div", "mu", "🚫 " + f.gone + "× als „gibt's nicht mehr“ gemeldet"); g.style.color = "#d97706"; c.append(g); }
+    const act = (label, fn, col) => { const b = mkEl("button", "btn", label); if (col) b.style.color = col; b.onclick = fn; c.append(b); };
+    act("🗺 Zeigen", () => { admOpen(false); setTimeout(() => { map.setView([f.lat, f.lng], 17); if (gone) return; L.popup().setLatLng([f.lat, f.lng]).setContent(k[1] + " Vorschlag hier").openOn(map); }, 350); });
+    const done = t => { toast(t); fxLoad(); admRender(); };
+    if (!gone) {
+      act("✅ Bestätigen", async () => { const x = await adm("fixed/" + f.id + "/approve", "POST", {}); x.ok ? done("Bestätigt, für alle sichtbar") : toast(x.j.error || "Fehler"); });
+      act("❌ Ablehnen", async () => { const reason = prompt("Grund für die Ablehnung (optional):", ""); if (reason === null) return; const x = await adm("fixed/" + f.id + "/reject", "POST", { reason }); x.ok ? done("Abgelehnt") : toast(x.j.error || "Fehler"); }, "#dc2626");
+    } else {
+      act("🗑 Löschen", async () => { const x = await adm("fixed/" + f.id, "DELETE"); x.ok ? done("Gelöscht") : toast("Fehler"); }, "#dc2626");
+      act("✅ Behalten", async () => { const x = await adm("fixed/" + f.id + "/keep", "POST", {}); x.ok ? done("Bleibt bestehen") : toast("Fehler"); });
+    }
+    return c;
+  };
+  w.append(mkEl("div", "fxl", "Neue Vorschläge (" + r.j.pending.length + ")"));
+  if (!r.j.pending.length) w.append(mkEl("div", "mu", "Nichts zu prüfen. 👍"));
+  for (const f of r.j.pending) w.append(card(f, false));
+  if (r.j.gone.length) { w.append(mkEl("div", "fxl", "Als entfernt gemeldet (" + r.j.gone.length + ")")); for (const f of r.j.gone) w.append(card(f, true)); }
+  return w;
+};
+MA.fixed = fxOpen;
+fxLoad(); setInterval(() => { if (!document.hidden) fxLoad(); }, 10 * 60000);
 
 // ---------- Menü-Aktionen und Fenster ----------
 Object.assign(MA, {

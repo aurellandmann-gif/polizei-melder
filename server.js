@@ -31,6 +31,11 @@ CREATE TABLE IF NOT EXISTS friends(user_id INTEGER, friend_id INTEGER, created I
 for (const c of ['reports_total INTEGER DEFAULT 0', 'confirms_total INTEGER DEFAULT 0', 'warned_total INTEGER DEFAULT 0', 'crowns INTEGER DEFAULT 0', 'badges TEXT'])
   try { db.exec('ALTER TABLE users ADD COLUMN ' + c); } catch {}
 try { db.exec('ALTER TABLE reports ADD COLUMN warned INTEGER DEFAULT 0'); } catch {}
+// Feste Blitzer: von Nutzern eingetragen, erst nach Prüfung durch Admins sichtbar (status pending → ok/rejected)
+db.exec(`CREATE TABLE IF NOT EXISTS fixed(id INTEGER PRIMARY KEY AUTOINCREMENT, lat REAL NOT NULL, lng REAL NOT NULL, kind TEXT NOT NULL, speed INTEGER, dir INTEGER, loc TEXT, note TEXT,
+  user_id INTEGER, status TEXT DEFAULT 'pending', reason TEXT, created INTEGER, decided_by TEXT, decided_at INTEGER, gone INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS fixed_gone(fixed_id INTEGER, user_id INTEGER, PRIMARY KEY(fixed_id, user_id));`);
+const FKINDS = { radar: 'Fester Blitzer', section: 'Abschnittskontrolle', red: 'Rotlicht-Blitzer' };
 
 let vapid = null;
 if (webpush) {
@@ -250,6 +255,7 @@ http.createServer(async (req, res) => {
   const p = url.pathname;
   try {
     if (p === '/health') return send(res, 200, { ok: true });
+    let m;
     if (req.method !== 'GET' && req.headers['x-req'] !== '1') return send(res, 403, { error: 'Nicht erlaubt' });
     const user = getUser(req);
     if (req.method !== 'GET' && p !== '/api/logout' && !(req.method === 'DELETE' && p === '/api/me') && !(user && user.role === 'admin')) {
@@ -282,7 +288,7 @@ http.createServer(async (req, res) => {
     if (req.method === 'DELETE' && p === '/api/me') {
       if (!user) return send(res, 401, { error: 'Nicht angemeldet' });
       if (user.role === 'admin') return send(res, 403, { error: 'Admin-Konten werden in Render verwaltet' });
-      for (const q of ['DELETE FROM reports WHERE user_id=?', 'DELETE FROM votes WHERE user_id=?', 'DELETE FROM sessions WHERE user_id=?', 'DELETE FROM push_subs WHERE user_id=?', 'DELETE FROM history WHERE user_id=?', 'DELETE FROM points_log WHERE user_id=?', 'DELETE FROM seen WHERE author_id=?', 'DELETE FROM friends WHERE user_id=? OR friend_id=?', 'DELETE FROM users WHERE id=?']) { const st = db.prepare(q); st.run(...Array(q.split('?').length - 1).fill(user.id)); }
+      for (const q of ['DELETE FROM reports WHERE user_id=?', 'DELETE FROM votes WHERE user_id=?', 'DELETE FROM sessions WHERE user_id=?', 'DELETE FROM push_subs WHERE user_id=?', 'DELETE FROM history WHERE user_id=?', 'DELETE FROM points_log WHERE user_id=?', 'DELETE FROM seen WHERE author_id=?', 'DELETE FROM friends WHERE user_id=? OR friend_id=?', "DELETE FROM fixed WHERE user_id=? AND status<>'ok'", 'UPDATE fixed SET user_id=NULL WHERE user_id=?', 'DELETE FROM fixed_gone WHERE user_id=?', 'DELETE FROM users WHERE id=?']) { const st = db.prepare(q); st.run(...Array(q.split('?').length - 1).fill(user.id)); }
       return send(res, 200, { ok: true }, { 'Set-Cookie': 'sid=; HttpOnly; Path=/; Max-Age=0' });
     }
 
@@ -332,6 +338,45 @@ http.createServer(async (req, res) => {
       if (user && user.role !== 'admin' && !user.banned && user.trust > 0)
         mine = { name: user.name, trust: user.trust, crown: cr(user.id), rank: db.prepare(`SELECT COUNT(*) c FROM users WHERE ${W} AND trust>?`).get(now, user.trust).c + 1 };
       return send(res, 200, { scope: 'all', top: top.map(x => ({ name: x.name, trust: x.trust, crown: cr(x.id) })), me: mine });
+    }
+
+    // ---- Feste Blitzer ----
+    if (req.method === 'GET' && p === '/api/fixed') {
+      const rows = db.prepare("SELECT id, lat, lng, kind, speed, dir, loc, note, status, user_id FROM fixed WHERE status='ok' OR (status='pending' AND user_id=?) LIMIT 5000").all(user ? user.id : -1);
+      return send(res, 200, rows.map(({ user_id, ...f }) => ({ ...f, mine: user && user_id === user.id ? 1 : undefined })));
+    }
+    if (req.method === 'GET' && p === '/api/fixed/mine') {
+      if (!user) return send(res, 401, { error: 'Bitte zuerst anmelden' });
+      return send(res, 200, db.prepare('SELECT id, lat, lng, kind, speed, loc, status, reason, created FROM fixed WHERE user_id=? ORDER BY id DESC LIMIT 50').all(user.id));
+    }
+    if (req.method === 'POST' && p === '/api/fixed') {
+      if (!user) return send(res, 401, { error: 'Bitte zuerst anmelden' });
+      if (user.trust <= -10) return send(res, 403, { error: 'Dein Konto darf gerade keine Blitzer eintragen.' });
+      if (limited('u' + user.id, 'fixed', 10)) return send(res, 429, { error: 'Zu viele Einträge, bitte später erneut.' });
+      const d = await readBody(req); if (!d) return send(res, 400, { error: 'Ungültig' });
+      const lat = +d.lat, lng = +d.lng;
+      if (!(lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) || !FKINDS[d.kind]) return send(res, 400, { error: 'Ungültige Daten' });
+      const speed = Number.isInteger(d.speed) && d.speed >= 5 && d.speed <= 160 ? d.speed : null;
+      const dir = Number.isInteger(d.dir) && d.dir >= 0 && d.dir < 360 ? d.dir : null;
+      const loc = clean(d.loc, 100), note = clean(d.note, 200);
+      if (user.role !== 'admin') { const a = assess(user, { loc, note, dest: '' }, lat, lng, d.gps); if (a.reject) { if (a.strike) addTrust(user.id, -2); return send(res, 422, { error: a.reject }); } }
+      const dup = db.prepare("SELECT status FROM fixed WHERE kind=? AND status IN ('ok','pending') AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?").all(d.kind, lat - .001, lat + .001, lng - .0015, lng + .0015)[0];
+      if (dup) return send(res, 409, { error: dup.status === 'ok' ? 'Dieser Blitzer ist schon eingetragen.' : 'Dieser Blitzer wartet schon auf Prüfung.' });
+      const ok = user.role === 'admin', now = Date.now();
+      const r = db.prepare('INSERT INTO fixed(lat,lng,kind,speed,dir,loc,note,user_id,status,created,decided_by,decided_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(lat, lng, d.kind, speed, dir, loc, note, user.id, ok ? 'ok' : 'pending', now, ok ? user.name : null, ok ? now : null);
+      modlog(user, ok ? 'blitzer:eingetragen' : 'blitzer:vorschlag', `#${r.lastInsertRowid} ${FKINDS[d.kind]}${speed ? ' ' + speed : ''} ${loc}`);
+      if (!ok) for (const a of db.prepare("SELECT id FROM users WHERE role='admin'").all()) notifyUser(a.id, '📸 Neuer Blitzer zu prüfen', `${FKINDS[d.kind]}${loc ? ': ' + loc : ''} (von ${user.name})`);
+      return send(res, 201, { ok: true, status: ok ? 'ok' : 'pending' });
+    }
+    m = p.match(/^\/api\/fixed\/(\d+)\/gone$/);
+    if (req.method === 'POST' && m) {
+      if (!user) return send(res, 401, { error: 'Bitte zuerst anmelden' });
+      if (limited('u' + user.id, 'vote', 60)) return send(res, 429, { error: 'Zu viele Aktionen' });
+      const f = db.prepare("SELECT id FROM fixed WHERE id=? AND status='ok'").get(+m[1]); if (!f) return send(res, 404, { error: 'Nicht gefunden' });
+      try { db.prepare('INSERT INTO fixed_gone VALUES(?,?)').run(f.id, user.id); } catch { return send(res, 409, { error: 'Hast du schon gemeldet' }); }
+      db.prepare('UPDATE fixed SET gone=gone+1 WHERE id=?').run(f.id);
+      return send(res, 200, { ok: true });
     }
 
     if (req.method === 'GET' && p === '/api/heat') {
@@ -436,7 +481,7 @@ http.createServer(async (req, res) => {
       return send(res, 201, { ok: true, flagged: !!flag });
     }
 
-    let m = p.match(/^\/api\/reports\/(\d+)\/(still|gone|fake)$/);
+    m = p.match(/^\/api\/reports\/(\d+)\/(still|gone|fake)$/);
     if (req.method === 'POST' && m) {
       if (!user) return send(res, 401, { error: 'Bitte zuerst anmelden' });
       if (limited('u' + user.id, 'vote', 60)) return send(res, 429, { error: 'Zu viele Aktionen' });
@@ -489,6 +534,7 @@ http.createServer(async (req, res) => {
         return send(res, 200, { ...stats(), users: c('SELECT COUNT(*) c FROM users'), onlineUsers: c('SELECT COUNT(*) c FROM users WHERE last_seen>?', now - 180000),
           guests: [...presence.values()].filter(v => !v.uid && now - v.t <= 180000).length, active: c('SELECT COUNT(*) c FROM reports WHERE t>?', now - TTL),
           flagged: c('SELECT COUNT(*) c FROM reports WHERE flag=1 AND t>?', now - TTL),
+          fixedPending: c("SELECT COUNT(*) c FROM fixed WHERE status='pending' OR (status='ok' AND gone>0)"),
           bans: c('SELECT COUNT(*) c FROM bans WHERE until IS NULL OR until>?', now) + c('SELECT COUNT(*) c FROM users WHERE banned=1 AND (ban_until IS NULL OR ban_until>?)', now) });
       }
       if (req.method === 'GET' && p === '/api/admin/users') {
@@ -547,6 +593,37 @@ http.createServer(async (req, res) => {
       }
       am = p.match(/^\/api\/admin\/reports\/(\d+)\/approve$/);
       if (req.method === 'POST' && am) { db.prepare('UPDATE reports SET flag=0 WHERE id=?').run(+am[1]); modlog(user, 'admin:freigegeben', 'Meldung #' + am[1]); return send(res, 200, { ok: true }); }
+      if (req.method === 'GET' && p === '/api/admin/fixed') {
+        const q = `SELECT f.*, u.name AS author FROM fixed f LEFT JOIN users u ON u.id=f.user_id WHERE `;
+        return send(res, 200, { pending: db.prepare(q + "f.status='pending' ORDER BY f.id ASC LIMIT 200").all(), gone: db.prepare(q + "f.status='ok' AND f.gone>0 ORDER BY f.gone DESC LIMIT 200").all() });
+      }
+      am = p.match(/^\/api\/admin\/fixed\/(\d+)\/(approve|reject|keep)$/);
+      if (req.method === 'POST' && am) {
+        const f = db.prepare('SELECT * FROM fixed WHERE id=?').get(+am[1]); if (!f) return send(res, 404, { error: 'Nicht gefunden' });
+        const d = await readBody(req) || {}, what = FKINDS[f.kind] + (f.loc ? ': ' + f.loc : '');
+        if (am[2] === 'approve') {
+          if (f.status === 'ok') return send(res, 200, { ok: true });
+          db.prepare("UPDATE fixed SET status='ok', reason=NULL, decided_by=?, decided_at=? WHERE id=?").run(user.name, now, f.id);
+          if (f.user_id && f.user_id !== user.id) { addTrust(f.user_id, 3); notifyUser(f.user_id, '✅ Blitzer bestätigt', what + ' ist jetzt für alle sichtbar. +3 Punkte'); }
+          modlog(user, 'admin:blitzer bestätigt', '#' + f.id + ' ' + what);
+        } else if (am[2] === 'reject') {
+          const reason = clean(d.reason, 120);
+          db.prepare("UPDATE fixed SET status='rejected', reason=?, decided_by=?, decided_at=? WHERE id=?").run(reason || null, user.name, now, f.id);
+          if (f.user_id) notifyUser(f.user_id, '❌ Blitzer abgelehnt', what + (reason ? ' – ' + reason : ''));
+          modlog(user, 'admin:blitzer abgelehnt', '#' + f.id + ' ' + what + (reason ? ' – ' + reason : ''));
+        } else {
+          db.prepare('UPDATE fixed SET gone=0 WHERE id=?').run(f.id); db.prepare('DELETE FROM fixed_gone WHERE fixed_id=?').run(f.id);
+          modlog(user, 'admin:blitzer behalten', '#' + f.id + ' ' + what);
+        }
+        return send(res, 200, { ok: true });
+      }
+      am = p.match(/^\/api\/admin\/fixed\/(\d+)$/);
+      if (req.method === 'DELETE' && am) {
+        const f = db.prepare('SELECT * FROM fixed WHERE id=?').get(+am[1]);
+        db.prepare('DELETE FROM fixed WHERE id=?').run(+am[1]); db.prepare('DELETE FROM fixed_gone WHERE fixed_id=?').run(+am[1]);
+        if (f) modlog(user, 'admin:blitzer gelöscht', '#' + f.id + ' ' + FKINDS[f.kind] + (f.loc ? ': ' + f.loc : ''));
+        return send(res, 200, { ok: true });
+      }
       if (req.method === 'GET' && p === '/api/admin/log') return send(res, 200, db.prepare('SELECT t,name,action,detail FROM mod_log ORDER BY id DESC LIMIT 150').all());
       return send(res, 404, { error: 'Unbekannt' });
     }
